@@ -39,6 +39,7 @@ require.or.install("doParallel")
 #require.or.install("Rgraphviz")
 require.or.install("ggplot2")
 require.or.install("slam")
+require.or.install("RWeka")
 registerDoParallel(makeCluster(detectCores()))
 
 corpus.file.name <- 'corpus'
@@ -115,7 +116,7 @@ Here we do an frequency analysis on sample of the training set. To reduce the di
 
 ```{r}
 set.seed(1234)
-sample.percent <- 0.001 #limited memory on my machine
+sample.percent <- 1 #limited memory on my machine
 twitter.train <- readLines("corpus/final/en_US/en_US.twitter.train.txt")
 news.train <- readLines("corpus/final/en_US/en_US.news.train.txt")
 blogs.train <- readLines("corpus/final/en_US/en_US.blogs.train.txt")
@@ -123,6 +124,10 @@ blogs.train <- readLines("corpus/final/en_US/en_US.blogs.train.txt")
 create.sampled.corpus <- function(training.set, sample.percent) {
   print(paste("Sampling corpus at", sample.percent))
   Corpus(VectorSource(sample(training.set, sample.percent*length(training.set))))
+}
+
+create.corpus <- function(training.set) {
+  Corpus(VectorSource(training.set))
 }
 
 corpi <- sapply(list(twitter.train, news.train, blogs.train), create.sampled.corpus, sample.percent)
@@ -136,13 +141,13 @@ clean.corpus <- function(corpus) {
   corpus <- tm_map(corpus, removeNumbers)
   corpus <- tm_map(corpus, removePunctuation)
   corpus <- tm_map(corpus, content_transformer(tolower))
-  corpus <- tm_map(corpus, removeWords, c(stopwords("english"), profanity))
-  corpus <- tm_map(corpus, stemDocument, language = "english")
+  #corpus <- tm_map(corpus, removeWords, c(stopwords("english"), profanity))
+  #corpus <- tm_map(corpus, stemDocument, language = "english")
   corpus
 }
 
 cleaned.corpus <- clean.corpus(combined.corpus)
-rm(corpi, combined.corpus, twitter.train, news.train, blogs.train)
+#rm(corpi, combined.corpus, twitter.train, news.train, blogs.train)
 ```
 After sampling and cleaning the data, we have a corpus of `r length(cleaned.corpus)`
 

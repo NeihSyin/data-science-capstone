@@ -1,0 +1,134 @@
+---
+title: "Data Science Capstone Milestone Report - Exploratory Analysis"
+author: "Timothy M. Rodriguez"
+date: "Sunday, July 12, 2015"
+output: html_document
+---
+
+## Summary
+In this milestone we are going to first take an initial look at the data to get a better understanding of it and how to work with it. The data set is [HC Corpora](http://www.corpora.heliohost.org/). It is a set of text scraped from the internet in various languages.  We will be using the tm R package to due some exploratory analysis of the English data.
+
+```{r results='hide'}
+require.or.install <- function(package.name) {
+  if (!require(package.name, character.only=TRUE)) {
+    install.packages(package.name, dep=TRUE)
+    if (!require(package.name, character.only=TRUE)) {
+      stop(paste("Could not install package ", package.name))
+    }
+  }
+}
+
+download.if.not.present <- function(url, file.name) {
+  if (!file.exists(file.name)) {
+    download.file(url, file.name)
+  }
+}
+
+unzip.if.not.present <- function(zip.file.name, file.name) {
+  if (!file.exists(file.name)) {
+    unzip(zip.file.name, overwrite=TRUE, exdir=file.name)
+  }
+}
+
+```
+
+## Frequency Analysis
+
+Here we do an frequency analysis on sample of the training set. To reduce the dimensionality of the data we apply a series of transforms to strip non-essential characters, lower case words, stem the text, and remove common words (stop words) as well as profanity.
+
+```{r}
+set.seed(1234)
+
+clean.corpus <- function(corpus) {
+  transforms <- list(stripWhitespace, removeNumbers, removePunctuation, content_transformer(tolower))
+  tm_map(corpus, tm_reduce, tmFuns=transforms)
+}
+
+create.corpus <- function(training.set) {
+  Corpus(VectorSource(training.set))
+}
+
+split.by.processors <- function(training.set) {
+  g <- factor(round(3 * runif(length(training.set)))) #4 cores worth of work
+  split(training.set, g)
+}
+
+clusterEvalQ(cluster, library(tm))
+
+create.corpus.parallel <- function(training.set) {
+  corpi <- parLapply(cluster, split.by.processors(training.set), create.corpus)
+  cleaned.corpi <- parLapply(cluster, corpi, clean.corpus)
+  Reduce(c, cleaned.corpi)
+}
+
+file.con <- file("corpus/final/en_US/en_US.twitter.train.txt")
+batch.size <- 10000
+batch.num <- 1
+repeat {
+  train <- readLines(file.con, batch.size)
+  
+  if (length(train) == 0) {
+    break
+  }
+  
+  corpus <- create.corpus.parallel(train)
+  batch.num <- batch.num + 1
+}
+
+num.lines <- 1000000
+twitter.train <- readLines("corpus/final/en_US/en_US.twitter.train.txt", num.lines)
+news.train <- readLines("corpus/final/en_US/en_US.news.train.txt", num.lines)
+blogs.train <- readLines("corpus/final/en_US/en_US.blogs.train.txt", num.lines)
+
+twitter.corpus <- create.corpus.parallel(twitter.train[1:10000])
+news.corpus <- create.corpus.parallel(news.train[1:10000])
+blogs.corpus <- create.corpus.parallel(blogs.train[1:10000])
+
+combined.corpus <- c(twitter.corpus, news.corpus, blogs.corpus)
+
+#profanity <- readLines("profanity/en_US/profanity.txt")
+
+```
+After sampling and cleaning the data, we have a corpus of `r length(cleaned.corpus)`
+
+Now that we have a cleaned corpus, let's do some analysis on frequencies.
+
+```{r}
+clusterEvalQ(cluster, Sys.setenv(JAVA_HOME=""))
+clusterEvalQ(cluster, library(RWeka))
+
+create.ngram.dtm <- function(corpus, gram) {
+  DocumentTermMatrix(corpus, control = list(tokenize=function(x) NGramTokenizer(x, Weka_control(min=gram, max=gram))))
+}
+
+create.dtm.parallel <- function(corpus, gram) {
+  dtms <- parLapply(cluster, split.by.processors(corpus), create.ngram.dtm, gram)
+  Reduce(c, dtms)
+}
+uni.dtm <- create.dtm.parallel(combined.corpus, 1)
+bi.dtm <- create.dtm.parallel(combined.corpus, 2)
+tri.dtm <- create.dtm.parallel(combined.corpus, 3)
+quad.dtm <- create.dtm.parallel(combined.corpus, 4)
+
+```
+
+```{r}
+create.word.freq <- function(dtm) {
+  freq <- sort(col_sums(dtm), decreasing=TRUE)
+  data.frame(word=names(freq), freq=freq, row.names=NULL)
+}
+
+uni.word.freq <- create.word.freq(uni.dtm)
+bi.word.freq <- create.word.freq(bi.dtm)
+tri.word.freq <- create.word.freq(tri.dtm)
+
+#dtm <- removeSparseTerms(doc.term.matrix, 0.4)
+ggplot(aes(reorder(word, -freq), freq), data=subset(word.freq, freq > 300)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=45, hjust=1))
+
+```
+
+One can see here that the distribution follows a power law and the next word diminishes in frequency quite strongly after the last.  This distribution would be much more clear if more data had been indexed.  However, only a small sample was able to be taken due to compute resource constraints.
+
+## Summary
+
+Now that there is a text processing pipeline for ingesting and further analyzing the text.  This combined sampled corpus can be used for creating a mixed ngram model to predict the next word after a set of words (as is used for predictive text systems such as SwiftKey).
